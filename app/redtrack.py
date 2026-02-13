@@ -58,10 +58,11 @@ class RedTrackClient:
             out: list[dict[str, Any]] = []
             page = 1
             while True:
+                # NOTE: Some RedTrack setups return 500 when using status filter.
+                # So we fetch without status and filter locally.
                 data = self._get(
                     path,
                     params={
-                        "status": "active",
                         "page": page,
                         "per": per,
                         "timezone": TIMEZONE,
@@ -75,13 +76,22 @@ class RedTrackClient:
                 page += 1
             return out
 
+        def _is_active(c: dict[str, Any]) -> bool:
+            v = c.get("status")
+            if v is None:
+                return False
+            s = str(v).lower()
+            return s in ("active", "enabled", "1", "true")
+
         try:
-            return _list("/campaigns/v2")
+            all_ = _list("/campaigns/v2")
         except RedTrackError as e:
-            # only fallback on server errors
-            if "500" in str(e) or "502" in str(e) or "503" in str(e):
-                return _list("/campaigns")
-            raise
+            if any(code in str(e) for code in ("500", "502", "503")):
+                all_ = _list("/campaigns")
+            else:
+                raise
+
+        return [c for c in all_ if _is_active(c)]
 
     def get_campaign(self, campaign_id: str) -> dict[str, Any]:
         return self._get(f"/campaigns/{campaign_id}")
