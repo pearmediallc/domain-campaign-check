@@ -60,6 +60,9 @@
 
   <div class="card">
     <h3 style="margin-top:0">Run now</h3>
+    {% if request.query_params.get('running') %}
+      <div class="muted">A run is already in progress. Please wait for it to finish.</div>
+    {% endif %}
     <form method="post" action="/run">
       <button type="submit">Run check now</button>
     </form>

@@ -14,7 +14,15 @@ from .config import MAX_TELEGRAM_MESSAGES_PER_RUN, TELEGRAM_VERBOSE
 from .results_store import append_run
 
 
+_running = False
+
+
 def _job():
+    global _running
+    if _running:
+        log("job.skip", reason="already_running")
+        return
+
     cfg = load_config()
     if not should_run_now(cfg, tz_name=TIMEZONE):
         log(
@@ -31,6 +39,7 @@ def _job():
     # Always update last_run_epoch even on failure, otherwise it will retry every minute forever.
     import datetime as dt
 
+    _running = True
     now_epoch = int(time.time())
     cfg.last_run_epoch = now_epoch
     # record local date for daily schedule guard
@@ -99,6 +108,8 @@ def _job():
             send_message(f"⚠️ Domain check job failed: {e}")
         except Exception:
             pass
+    finally:
+        _running = False
 
 
 def start_scheduler() -> BackgroundScheduler:

@@ -23,6 +23,7 @@ templates = Jinja2Templates(directory="app/templates")
 _sched = None
 _lock = threading.Lock()
 _last_run: dict[str, str] = {}
+_is_running = False
 
 
 @app.on_event("startup")
@@ -32,10 +33,11 @@ def _startup():
 
 
 def _run_once(cfg: AppConfig):
-    global _last_run
+    global _last_run, _is_running
     try:
         from .log import log
 
+        _is_running = True
         log("manual.start", date_from=cfg.date_from, date_to=cfg.date_to, days_lookback=cfg.days_lookback)
         redtrack = RedTrackClient()
         results = run_full_check(
@@ -93,6 +95,8 @@ def _run_once(cfg: AppConfig):
             "time": dt.datetime.now(dt.timezone.utc).isoformat(),
             "summary": f"Run failed: {e}",
         }
+    finally:
+        _is_running = False
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -150,7 +154,11 @@ def update_config(
 @app.post("/run")
 def run_now():
     # Trigger a manual run in a background thread so the request returns quickly.
+    global _is_running
     with _lock:
+        if _is_running:
+            # already running
+            return RedirectResponse(url="/?running=1", status_code=303)
         cfg = load_config()
         t = threading.Thread(target=_run_once, args=(cfg,), daemon=True)
         t.start()

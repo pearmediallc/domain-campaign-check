@@ -184,10 +184,17 @@ def run_full_check(
     domain_cache: dict[str, dict[str, Any]] = {}
     landing_cache: dict[str, dict[str, Any]] = {}
 
+    processed = 0
+    target = len(active_map)
+
     for c in campaigns:
         cid = str(c.get("id"))
         if cid not in active_map:
             continue
+
+        processed += 1
+        if processed == 1 or processed % 25 == 0 or processed == target:
+            log("checker.progress", processed=processed, target=target)
 
         debug("checker.campaign.start", campaign_id=cid, title=c.get("title"), status=c.get("status"))
 
@@ -266,4 +273,5 @@ def run_full_check(
             }
         )
 
+    log("checker.done", checked=len(results), processed=processed, target=target)
     return results
