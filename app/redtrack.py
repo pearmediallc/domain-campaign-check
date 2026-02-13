@@ -26,13 +26,14 @@ class RedTrackClient:
     def _get(self, path: str, params: dict[str, Any] | None = None, *, retries: int = 3) -> Any:
         if not self.api_key:
             raise RedTrackError("Missing api key (REDTRACK_API_KEY)")
-        p = {"api_key": self.api_key}
+        # Many RedTrack endpoints accept/require format=json
+        p = {"api_key": self.api_key, "format": "json"}
         if params:
             p.update({k: v for k, v in params.items() if v is not None})
 
         last_err: str | None = None
         for attempt in range(retries + 1):
-            r = self.client.get(path, params=p)
+            r = self.client.get(path, params=p, headers={"Accept": "application/json"})
 
             # Try to parse JSON for nicer errors
             data = None
@@ -78,6 +79,8 @@ class RedTrackClient:
                     v = data.get(k)
                     if isinstance(v, list):
                         return v
+            if isinstance(data, dict) and data.get("error"):
+                raise RedTrackError(f"RedTrack error: {data.get('error')}")
             raise RedTrackError(f"Unexpected campaigns response shape: {type(data)}")
 
         def _list(path: str) -> list[dict[str, Any]]:
