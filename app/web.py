@@ -17,7 +17,12 @@ templates = Jinja2Templates(directory="app/templates")
 
 @app.on_event("startup")
 def _startup():
-    migrate()
+    # Don't crash the whole web service if DB is still provisioning.
+    try:
+        migrate()
+    except Exception as e:
+        # Render will show logs; keep the server up so you can still see UI once DB is ready.
+        print(f"[startup] migrate failed: {e}")
 
 
 @app.get("/", response_class=HTMLResponse)
