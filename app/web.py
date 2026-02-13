@@ -53,6 +53,7 @@ def _run_once(cfg: AppConfig):
             "summary": f"Checked {total} campaigns. Failing: {failing}.",
         }
         log("manual.results", total=total, failing=failing)
+        log("manual.finish", summary=_last_run["summary"])
 
         append_run(
             {

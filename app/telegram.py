@@ -3,6 +3,7 @@ from __future__ import annotations
 import httpx
 
 from .config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+from .log import log
 
 
 class TelegramError(RuntimeError):
@@ -22,9 +23,12 @@ def send_message(text: str, parse_mode: str | None = None, disable_web_page_prev
     if parse_mode:
         payload["parse_mode"] = parse_mode
 
+    log("telegram.send.start", chars=len(text))
     r = httpx.post(url, json=payload, timeout=20)
     if r.status_code >= 400:
+        log("telegram.send.error", status=r.status_code, body=r.text[:400])
         raise TelegramError(f"Telegram send failed: {r.status_code} {r.text[:400]}")
+    log("telegram.send.ok", status=r.status_code)
 
 
 def send_many(lines: list[str], *, max_messages: int = 25, header: str | None = None) -> None:
