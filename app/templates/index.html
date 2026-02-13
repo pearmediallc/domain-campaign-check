@@ -63,28 +63,27 @@
   <div class="card">
     <h3 style="margin-top:0">Latest scheduled/manual run (cached)</h3>
     {% if latest %}
-      <div class="muted">type: {{ latest.kind }} | ts: {{ latest.ts }} | checked: {{ latest.total_checked }} | failing: {{ latest.failing }}</div>
+      <div class="muted">type: {{ latest['kind'] }} | ts: {{ latest['ts'] }} | checked: {{ latest['total_checked'] }} | failing: {{ latest['failing'] }}</div>
       <h4>Failing campaigns</h4>
-      {% set any_fail = false %}
-      <ul>
-        {% for r in latest.results %}
-          {% set failed = r.checks | selectattr('ok','equalto',false) | list %}
-          {% if failed|length > 0 %}
-            {% set any_fail = true %}
+      {% if failing_campaigns and failing_campaigns|length > 0 %}
+        <ul>
+          {% for it in failing_campaigns %}
+            {% set c = it['campaign'] %}
             <li>
-              <b>{{ r.campaign.title or r.campaign.id }}</b> ({{ r.campaign.id }})
-              {% if r.campaign.domain_name %} — {{ r.campaign.domain_name }}{% endif %}
-              {% if r.campaign.trackback_url %}<div class="muted">{{ r.campaign.trackback_url }}</div>{% endif %}
+              <b>{{ c.get('title') or c.get('id') }}</b> ({{ c.get('id') }})
+              {% if c.get('domain_name') %} — {{ c.get('domain_name') }}{% endif %}
+              {% if c.get('trackback_url') %}<div class="muted">{{ c.get('trackback_url') }}</div>{% endif %}
               <div class="muted">
-                {% for ch in failed[:5] %}
-                  {{ ch.kind }}: {{ ch.failure_type }} {{ ch.message }}<br/>
+                {% for ch in it['failed'][:8] %}
+                  {{ ch.get('kind') }}: {{ ch.get('failure_type') }} {{ ch.get('message') }}<br/>
                 {% endfor %}
               </div>
             </li>
-          {% endif %}
-        {% endfor %}
-      </ul>
-      {% if not any_fail %}<div class="muted">No failing campaigns in latest run.</div>{% endif %}
+          {% endfor %}
+        </ul>
+      {% else %}
+        <div class="muted">No failing campaigns in latest run.</div>
+      {% endif %}
     {% else %}
       <div class="muted">No cached runs yet.</div>
     {% endif %}

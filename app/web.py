@@ -99,6 +99,17 @@ def index(request: Request):
     cached = load_results()
     runs = cached.get("runs") if isinstance(cached, dict) else []
     latest = runs[0] if isinstance(runs, list) and runs else None
+
+    failing_campaigns = []
+    if isinstance(latest, dict):
+        for r in latest.get("results") or []:
+            if not isinstance(r, dict):
+                continue
+            checks = r.get("checks") or []
+            failed = [ch for ch in checks if isinstance(ch, dict) and not ch.get("ok", True)]
+            if failed:
+                failing_campaigns.append({"campaign": r.get("campaign") or {}, "failed": failed})
+
     return templates.TemplateResponse(
         "index.html",
         {
@@ -107,6 +118,7 @@ def index(request: Request):
             "now": dt.datetime.now(dt.timezone.utc),
             "last_run": _last_run or None,
             "latest": latest,
+            "failing_campaigns": failing_campaigns,
         },
     )
 

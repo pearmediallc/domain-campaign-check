@@ -47,6 +47,7 @@ def _job():
             "failing": failing,
             "results": results,
         }
+        log("cache.write", path="results.json", runs_cached="append")
         append_run(run_record)
 
         # Telegram notifications (verbose: send a log line per campaign checked)
