@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ campaign.title if campaign else 'Campaign' }}</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 18px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border-bottom: 1px solid #eee; padding: 10px 8px; text-align: left; vertical-align: top; }
+    .ok { color: #0a7a2f; font-weight: 600; }
+    .bad { color: #b00020; font-weight: 700; }
+    .muted { color: #666; }
+    a { color: #0b57d0; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <a href="/">← Back</a>
+  {% if campaign %}
+    <h2 style="margin-bottom:0">{{ campaign.title }}</h2>
+    <div class="muted">id: {{ campaign.id }}</div>
+    <div>domain: {{ campaign.domain_name or '(unknown)' }}</div>
+    {% if campaign.trackback_url %}<div>url: {{ campaign.trackback_url }}</div>{% endif %}
+    <div class="muted">cost_30d={{ campaign.cost_30d }} revenue_30d={{ campaign.revenue_30d }}</div>
+  {% else %}
+    <h2>Campaign not found</h2>
+  {% endif %}
+
+  <h3>Recent checks</h3>
+  <table>
+    <thead>
+      <tr><th>Time (UTC)</th><th>Status</th><th>Type</th><th>Message</th><th>URL</th><th>HTTP</th><th>ms</th></tr>
+    </thead>
+    <tbody>
+      {% for chk in checks %}
+        <tr>
+          <td>{{ chk.created_at }}</td>
+          <td>{% if chk.ok %}<span class="ok">OK</span>{% else %}<span class="bad">FAIL</span>{% endif %}</td>
+          <td>{{ chk.failure_type }}</td>
+          <td class="muted">{{ chk.message }}</td>
+          <td class="muted">{{ chk.tested_url }}</td>
+          <td>{{ chk.http_status }}</td>
+          <td>{{ chk.elapsed_ms }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>
