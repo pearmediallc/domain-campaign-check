@@ -5,73 +5,67 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Domain Campaign Check</title>
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 18px; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { border-bottom: 1px solid #eee; padding: 10px 8px; text-align: left; vertical-align: top; }
-    .ok { color: #0a7a2f; font-weight: 600; }
-    .bad { color: #b00020; font-weight: 700; }
-    .muted { color: #666; }
-    .top { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
-    a { color: #0b57d0; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    input { padding: 6px 8px; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 18px; max-width: 900px; }
+    .card { border: 1px solid #eee; border-radius: 10px; padding: 14px; margin: 12px 0; }
+    label { display:block; margin-top: 10px; font-weight: 600; }
+    input { width: 100%; padding: 8px 10px; margin-top: 6px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .muted { color:#666; }
+    button { padding: 10px 12px; margin-top: 12px; cursor:pointer; }
+    code { background:#f6f6f6; padding: 2px 5px; border-radius: 6px; }
   </style>
 </head>
 <body>
-  <div class="top">
-    <h2 style="margin:0">Domain Campaign Check</h2>
-    <form method="get" action="/">
-      <input name="q" value="{{ q }}" placeholder="Search campaign" />
-      <label style="margin-left:8px">
-        <input type="checkbox" name="only_failing" value="true" {% if only_failing %}checked{% endif %} /> only failing
-      </label>
-      <button type="submit">Filter</button>
+  <h2 style="margin:0">Domain Campaign Check</h2>
+  <div class="muted">This app automatically checks ALL active RedTrack campaigns (filtered to those with spend/revenue in the selected window) and sends Telegram alerts for failures.</div>
+  <div class="muted">UTC now: {{ now.isoformat() }}</div>
+
+  <div class="card">
+    <h3 style="margin-top:0">Schedule & window</h3>
+    <form method="post" action="/config">
+      <label>Run every (minutes)</label>
+      <input name="interval_minutes" type="number" min="1" value="{{ cfg.interval_minutes }}" />
+      <div class="muted">Example: 1440 = once per day.</div>
+
+      <label>Lookback days (used when date_from/date_to are empty)</label>
+      <input name="days_lookback" type="number" min="1" value="{{ cfg.days_lookback }}" />
+
+      <div class="row">
+        <div>
+          <label>Date from (YYYY-MM-DD) optional</label>
+          <input name="date_from" value="{{ cfg.date_from or '' }}" placeholder="2026-02-01" />
+        </div>
+        <div>
+          <label>Date to (YYYY-MM-DD) optional</label>
+          <input name="date_to" value="{{ cfg.date_to or '' }}" placeholder="2026-02-13" />
+        </div>
+      </div>
+      <div class="muted">If both dates are set, the checker uses that exact window. Otherwise it uses last N days.</div>
+
+      <label>Alert on first failure</label>
+      <input name="alert_on_first_failure" value="{{ 'true' if cfg.alert_on_first_failure else 'false' }}" />
+      <div class="muted">Keep <code>false</code> to reduce false alarms (retries happen first).</div>
+
+      <button type="submit">Save settings</button>
     </form>
-    <div class="muted">UTC now: {{ now.isoformat() }}</div>
   </div>
 
-  <table>
-    <thead>
-      <tr>
-        <th>Campaign</th>
-        <th>Domain</th>
-        <th>Last 30d</th>
-        <th>Latest check</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for it in items %}
-        {% set c = it.campaign %}
-        {% set chk = it.check %}
-        <tr>
-          <td>
-            <a href="/campaign/{{ c.id }}">{{ c.title or c.id }}</a>
-            <div class="muted">id: {{ c.id }}</div>
-            {% if c.trackback_url %}<div class="muted">url: {{ c.trackback_url }}</div>{% endif %}
-          </td>
-          <td>
-            {% if c.domain_name %}{{ c.domain_name }}{% else %}<span class="muted">(unknown)</span>{% endif %}
-          </td>
-          <td>
-            cost: {{ '%.2f'|format(c.cost_30d or 0) }}<br/>
-            revenue: {{ '%.2f'|format(c.revenue_30d or 0) }}
-          </td>
-          <td>
-            {% if chk %}
-              {% if chk.ok %}
-                <span class="ok">OK</span>
-              {% else %}
-                <span class="bad">FAIL</span>
-                <div class="muted">{{ chk.failure_type }}: {{ chk.message }}</div>
-              {% endif %}
-              <div class="muted">{{ chk.created_at }}</div>
-            {% else %}
-              <span class="muted">No checks yet</span>
-            {% endif %}
-          </td>
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <div class="card">
+    <h3 style="margin-top:0">Run now</h3>
+    <form method="post" action="/run">
+      <button type="submit">Run check now</button>
+    </form>
+    {% if last_run %}
+      <div class="muted" style="margin-top:10px">Last manual run: {{ last_run.time }} — {{ last_run.summary }}</div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">Notes</h3>
+    <ul>
+      <li>No database is used. Settings are stored in a local config file on disk. (On Render, you should attach a persistent disk if you want settings to survive redeploys.)</li>
+      <li>The checker always iterates through all <b>active campaigns</b> from RedTrack.</li>
+    </ul>
+  </div>
 </body>
 </html>

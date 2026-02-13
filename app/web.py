@@ -1,88 +1,97 @@
 from __future__ import annotations
 
 import datetime as dt
+import threading
 
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, select
 
-from .db import get_session
-from .migrate import migrate
-from .models import Campaign, CheckResult
+from .checker import run_full_check
+from .redtrack import RedTrackClient
+from .scheduler import start_scheduler
+from .storage import AppConfig, load_config, save_config
+from .telegram import send_message
 
 app = FastAPI(title="Domain Campaign Check")
 templates = Jinja2Templates(directory="app/templates")
 
+_sched = None
+_lock = threading.Lock()
+_last_run: dict[str, str] = {}
+
 
 @app.on_event("startup")
 def _startup():
-    # Don't crash the whole web service if DB is still provisioning.
+    global _sched
+    _sched = start_scheduler()
+
+
+def _run_once(cfg: AppConfig):
+    global _last_run
     try:
-        migrate()
+        redtrack = RedTrackClient()
+        results = run_full_check(
+            redtrack,
+            date_from=cfg.date_from,
+            date_to=cfg.date_to,
+            days_lookback=cfg.days_lookback,
+        )
+        total = len(results)
+        failing = sum(1 for r in results if any(not ch.get("ok") for ch in r.get("checks", [])))
+        _last_run = {
+            "time": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "summary": f"Checked {total} campaigns. Failing: {failing}.",
+        }
+        # Optional: send a summary when manually run
+        try:
+            send_message(f"Manual run finished. {_last_run['summary']}")
+        except Exception:
+            pass
     except Exception as e:
-        # Render will show logs; keep the server up so you can still see UI once DB is ready.
-        print(f"[startup] migrate failed: {e}")
+        _last_run = {
+            "time": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "summary": f"Run failed: {e}",
+        }
 
 
 @app.get("/", response_class=HTMLResponse)
-def index(request: Request, only_failing: bool = False, q: str | None = None):
-    with get_session() as s:
-        # subquery for latest check per campaign
-        sub = (
-            select(CheckResult.campaign_id, func.max(CheckResult.created_at).label("max_created"))
-            .group_by(CheckResult.campaign_id)
-            .subquery()
-        )
-
-        stmt = (
-            select(Campaign, CheckResult)
-            .join(sub, sub.c.campaign_id == Campaign.id, isouter=True)
-            .join(
-                CheckResult,
-                (CheckResult.campaign_id == sub.c.campaign_id) & (CheckResult.created_at == sub.c.max_created),
-                isouter=True,
-            )
-            .order_by(Campaign.title.asc().nulls_last())
-        )
-
-        if q:
-            like = f"%{q}%"
-            stmt = stmt.where(Campaign.title.ilike(like))
-
-        rows = s.execute(stmt).all()
-
-    items = []
-    for camp, chk in rows:
-        if only_failing and (chk is None or chk.ok):
-            continue
-        items.append({"campaign": camp, "check": chk})
-
+def index(request: Request):
+    cfg = load_config()
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
-            "items": items,
-            "only_failing": only_failing,
-            "q": q or "",
+            "cfg": cfg,
             "now": dt.datetime.now(dt.timezone.utc),
+            "last_run": _last_run or None,
         },
     )
 
 
-@app.get("/campaign/{campaign_id}", response_class=HTMLResponse)
-def campaign_detail(request: Request, campaign_id: str):
-    with get_session() as s:
-        camp = s.get(Campaign, campaign_id)
-        checks = (
-            s.query(CheckResult)
-            .filter(CheckResult.campaign_id == campaign_id)
-            .order_by(CheckResult.created_at.desc())
-            .limit(50)
-            .all()
-        )
+@app.post("/config")
+def update_config(
+    interval_minutes: int = Form(...),
+    days_lookback: int = Form(...),
+    date_from: str = Form(""),
+    date_to: str = Form(""),
+    alert_on_first_failure: str = Form("false"),
+):
+    cfg = load_config()
+    cfg.interval_minutes = max(1, int(interval_minutes))
+    cfg.days_lookback = max(1, int(days_lookback))
+    cfg.date_from = date_from.strip() or None
+    cfg.date_to = date_to.strip() or None
+    cfg.alert_on_first_failure = (alert_on_first_failure or "false").lower() in ("1", "true", "yes", "on")
+    save_config(cfg)
+    return RedirectResponse(url="/", status_code=303)
 
-    return templates.TemplateResponse(
-        "campaign.html",
-        {"request": request, "campaign": camp, "checks": checks},
-    )
+
+@app.post("/run")
+def run_now():
+    # Trigger a manual run in a background thread so the request returns quickly.
+    with _lock:
+        cfg = load_config()
+        t = threading.Thread(target=_run_once, args=(cfg,), daemon=True)
+        t.start()
+    return RedirectResponse(url="/", status_code=303)

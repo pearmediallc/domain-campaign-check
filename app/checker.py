@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from .config import CHECK_RETRIES, CHECK_TIMEOUT_SECONDS, DAYS_LOOKBACK, TIMEZONE
+from .config import CHECK_RETRIES, CHECK_TIMEOUT_SECONDS, TIMEZONE
 from .redtrack import RedTrackClient
 
 
@@ -115,11 +115,11 @@ def extract_urls_from_campaign(c: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def compute_lookback_window() -> tuple[dt.date, dt.date]:
+def compute_lookback_window(days_lookback: int) -> tuple[dt.date, dt.date]:
     # Use UTC dates; RedTrack also accepts timezone param.
     # We keep logic simple: last N calendar days.
     today = dt.datetime.now(dt.timezone.utc).date()
-    date_from = today - dt.timedelta(days=DAYS_LOOKBACK)
+    date_from = today - dt.timedelta(days=days_lookback)
     date_to = today
     return date_from, date_to
 
@@ -149,16 +149,27 @@ def filter_campaigns_with_activity(campaigns: list[dict[str, Any]], report_rows:
     return out
 
 
-def run_full_check(redtrack: RedTrackClient) -> list[dict[str, Any]]:
+def run_full_check(
+    redtrack: RedTrackClient,
+    *,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    days_lookback: int = 30,
+) -> list[dict[str, Any]]:
     """Runs the daily check.
 
     Returns a list of result dicts:
     {campaign, stats, domain, urls, checks:[UrlCheck...]}
     """
-    date_from, date_to = compute_lookback_window()
+    if date_from and date_to:
+        df = dt.date.fromisoformat(date_from)
+        dt_ = dt.date.fromisoformat(date_to)
+    else:
+        df, dt_ = compute_lookback_window(days_lookback)
+
 
     campaigns = redtrack.list_active_campaigns()
-    report_rows = redtrack.report_by_campaign(date_from, date_to)
+    report_rows = redtrack.report_by_campaign(df, dt_)
 
     active_map = filter_campaigns_with_activity(campaigns, report_rows)
 
