@@ -23,6 +23,26 @@ class RedTrackClient:
         self.api_key = api_key or REDTRACK_API_KEY
         self.client = httpx.Client(base_url=self.base_url, timeout=timeout_s)
 
+    @staticmethod
+    def _normalize_list_payload(data: Any, *, label: str) -> list[dict[str, Any]]:
+        """Normalize list responses.
+
+        RedTrack sometimes returns:
+        - a raw list: [ ... ]
+        - an envelope: {items:[...], total:{...}}
+        - an envelope: {data:[...]}
+        """
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            if data.get("error"):
+                raise RedTrackError(f"RedTrack error in {label}: {data.get('error')}")
+            for k in ("items", "data", "result"):
+                v = data.get(k)
+                if isinstance(v, list):
+                    return v
+        raise RedTrackError(f"Unexpected {label} response shape: {type(data)}")
+
     def _get(self, path: str, params: dict[str, Any] | None = None, *, retries: int = 3) -> Any:
         if not self.api_key:
             raise RedTrackError("Missing api key (REDTRACK_API_KEY)")
@@ -75,21 +95,6 @@ class RedTrackClient:
         We fall back to /campaigns in that case.
         """
 
-        def _normalize_list(data: Any) -> list[dict[str, Any]]:
-            # RedTrack usually returns a list, but some deployments wrap in {data:[...]}
-            if isinstance(data, list):
-                return data
-            if isinstance(data, dict):
-                for k in ("data", "items", "result"):
-                    v = data.get(k)
-                    if isinstance(v, list):
-                        return v
-            if isinstance(data, dict) and data.get("error"):
-                raise RedTrackError(f"RedTrack error: {data.get('error')}")
-            if isinstance(data, str):
-                raise RedTrackError(f"Unexpected campaigns response shape: str: {data[:200]}")
-            raise RedTrackError(f"Unexpected campaigns response shape: {type(data)}")
-
         def _list(path: str) -> list[dict[str, Any]]:
             out: list[dict[str, Any]] = []
             page = 1
@@ -104,7 +109,7 @@ class RedTrackClient:
                         "timezone": TIMEZONE,
                     },
                 )
-                data = _normalize_list(raw)
+                data = self._normalize_list_payload(raw, label=f"campaigns list {path}")
                 out.extend(data)
                 if len(data) < per:
                     break
@@ -139,8 +144,7 @@ class RedTrackClient:
 
     def report_by_campaign(self, date_from: dt.date, date_to: dt.date) -> list[dict[str, Any]]:
         # group=campaign is the common grouping in RedTrack.
-        # Response is an array of free-form objects.
-        return self._get(
+        raw = self._get(
             "/report",
             params={
                 "group": "campaign",
@@ -150,5 +154,8 @@ class RedTrackClient:
                 "per": 5000,
                 "page": 1,
                 "total": "1",
+                # some deployments support this; harmless otherwise
+                "include_zero_rows": 0,
             },
         )
+        return self._normalize_list_payload(raw, label="report")
