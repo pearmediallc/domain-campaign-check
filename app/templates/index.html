@@ -23,7 +23,15 @@
   <div class="card">
     <h3 style="margin-top:0">Schedule & window</h3>
     <form method="post" action="/config">
-      <label>Run every (minutes)</label>
+      <label>Schedule mode</label>
+      <input name="schedule_mode" value="{{ cfg.schedule_mode }}" />
+      <div class="muted">Use <code>daily_at</code> (recommended) or <code>interval</code>.</div>
+
+      <label>Run at (HH:MM) (TIMEZONE)</label>
+      <input name="run_at_hhmm" value="{{ cfg.run_at_hhmm }}" placeholder="17:00" />
+      <div class="muted">Example: 17:00 = 5pm IST.</div>
+
+      <label>Run every (minutes) (used only if schedule_mode=interval)</label>
       <input name="interval_minutes" type="number" min="1" value="{{ cfg.interval_minutes }}" />
       <div class="muted">Example: 1440 = once per day.</div>
 
@@ -92,7 +100,7 @@
   <div class="card">
     <h3 style="margin-top:0">Notes</h3>
     <ul>
-      <li>No database is used. Settings are stored in a local config file on disk. (On Render, you should attach a persistent disk if you want settings to survive redeploys.)</li>
+      <li>No database is used. Settings + cached run results are stored in local JSON files on disk. (On Render, attach a persistent disk if you want them to survive redeploys.)</li>
       <li>The checker always iterates through all <b>active campaigns</b> from RedTrack.</li>
     </ul>
   </div>

@@ -65,21 +65,23 @@ def _run_once(cfg: AppConfig):
             }
         )
 
-        # Send Telegram logs for each campaign checked
+        # Telegram: ONLY send failing campaigns. If no failures, send nothing.
         try:
-            send_message(f"▶️ Manual run finished. {_last_run['summary']}")
-            if TELEGRAM_VERBOSE:
+            if failing:
                 from .telegram import send_many
 
-                lines: list[str] = []
+                lines: list[str] = [f"🚨 Manual run: {failing} failing campaign(s) (checked {total})"]
                 for r in results:
                     c = r.get("campaign", {})
                     failed = [ch for ch in r.get("checks", []) if not ch.get("ok")]
-                    status = "FAIL" if failed else "OK"
-                    lines.append(f"{status} | {c.get('title') or 'Campaign'} | {c.get('id')} | {c.get('domain_name') or ''}")
-                    if failed:
-                        for ch in failed[:5]:
-                            lines.append(f"  - {ch.get('kind')}: {ch.get('failure_type')} {ch.get('message')} {ch.get('tested_url')}")
+                    if not failed:
+                        continue
+                    lines.append(f"FAIL | {c.get('title') or 'Campaign'} | {c.get('id')} | {c.get('domain_name') or ''}")
+                    if c.get("trackback_url"):
+                        lines.append(f"  url: {c.get('trackback_url')}")
+                    for ch in failed[:8]:
+                        lines.append(f"  - {ch.get('kind')}: {ch.get('failure_type')} {ch.get('message')} {ch.get('tested_url')}")
+                    lines.append("")
                 send_many(lines, max_messages=MAX_TELEGRAM_MESSAGES_PER_RUN)
         except Exception as e:
             log("telegram.error", error=str(e))
@@ -125,13 +127,17 @@ def index(request: Request):
 
 @app.post("/config")
 def update_config(
-    interval_minutes: int = Form(...),
+    schedule_mode: str = Form("daily_at"),
+    run_at_hhmm: str = Form("17:00"),
+    interval_minutes: int = Form(1440),
     days_lookback: int = Form(...),
     date_from: str = Form(""),
     date_to: str = Form(""),
     alert_on_first_failure: str = Form("false"),
 ):
     cfg = load_config()
+    cfg.schedule_mode = (schedule_mode or "interval").strip()
+    cfg.run_at_hhmm = (run_at_hhmm or "17:00").strip()
     cfg.interval_minutes = max(1, int(interval_minutes))
     cfg.days_lookback = max(1, int(days_lookback))
     cfg.date_from = date_from.strip() or None
