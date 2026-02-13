@@ -79,10 +79,15 @@ def _job():
         log("cache.write", path="results.json", runs_cached="append")
         append_run(run_record)
 
-        # Telegram notifications: ONLY send failing campaigns. If no failures, send nothing.
-        if failing:
-            try:
-                lines: list[str] = [f"🚨 {failing} failing campaign(s) (checked {total} campaigns with activity)"]
+        # Telegram notifications: ALWAYS send a summary.
+        try:
+            send_message(
+                f"Daily domain check summary: checked {total} campaigns (active+activity in window). Failures: {failing}."
+            )
+
+            # If failures exist, send details.
+            if failing:
+                lines: list[str] = [f"🚨 {failing} failing campaign(s) (checked {total})"]
                 for r in results:
                     c = r.get("campaign", {})
                     failed = [ch for ch in r.get("checks", []) if not ch.get("ok")]
@@ -96,9 +101,10 @@ def _job():
                     lines.append("")
 
                 send_many(lines, max_messages=MAX_TELEGRAM_MESSAGES_PER_RUN)
-            except Exception as e:
-                log("telegram.error", error=str(e))
-                print(f"[scheduler] telegram failed: {e}")
+
+        except Exception as e:
+            log("telegram.error", error=str(e))
+            print(f"[scheduler] telegram failed: {e}")
 
     except Exception as e:
         # Single failure message (at most once per interval due to last_run_epoch)

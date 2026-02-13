@@ -67,12 +67,14 @@ def _run_once(cfg: AppConfig):
             }
         )
 
-        # Telegram: ONLY send failing campaigns. If no failures, send nothing.
+        # Telegram: ALWAYS send a summary.
         try:
+            send_message(f"Manual domain check summary: checked {total} campaigns. Failures: {failing}.")
+
             if failing:
                 from .telegram import send_many
 
-                lines: list[str] = [f"🚨 Manual run: {failing} failing campaign(s) (checked {total})"]
+                lines: list[str] = [f"🚨 Manual run failures: {failing} failing campaign(s) (checked {total})"]
                 for r in results:
                     c = r.get("campaign", {})
                     failed = [ch for ch in r.get("checks", []) if not ch.get("ok")]
