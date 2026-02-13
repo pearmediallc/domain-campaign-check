@@ -42,15 +42,20 @@ class RedTrackClient:
             except Exception:
                 data = None
 
+            # If response isn't JSON at all, treat as error (we rely on JSON shapes downstream)
+            if data is None:
+                last_err = f"{r.status_code} non-json response: {r.text[:200]}"
+                break
+
             # Some RedTrack errors come back as JSON with 200 or 4xx
             if isinstance(data, dict) and data.get("error"):
                 last_err = f"{r.status_code} {data.get('error')}"
-                # don't retry auth errors
+                # don't retry auth/validation errors
                 if r.status_code < 500:
                     break
 
             if r.status_code < 400 and not (isinstance(data, dict) and data.get("error")):
-                return data if data is not None else r.text
+                return data
 
             # retry only on 5xx
             last_err = last_err or f"{r.status_code} {r.text[:500]}"
@@ -81,6 +86,8 @@ class RedTrackClient:
                         return v
             if isinstance(data, dict) and data.get("error"):
                 raise RedTrackError(f"RedTrack error: {data.get('error')}")
+            if isinstance(data, str):
+                raise RedTrackError(f"Unexpected campaigns response shape: str: {data[:200]}")
             raise RedTrackError(f"Unexpected campaigns response shape: {type(data)}")
 
         def _list(path: str) -> list[dict[str, Any]]:
