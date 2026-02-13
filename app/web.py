@@ -13,6 +13,8 @@ from .scheduler import start_scheduler
 from .storage import AppConfig, load_config, save_config
 from .telegram import send_message
 from .debug_routes import router as debug_router
+from .results_store import load_results, append_run
+from .config import MAX_TELEGRAM_MESSAGES_PER_RUN, TELEGRAM_VERBOSE
 
 app = FastAPI(title="Domain Campaign Check")
 app.include_router(debug_router)
@@ -49,11 +51,38 @@ def _run_once(cfg: AppConfig):
             "summary": f"Checked {total} campaigns. Failing: {failing}.",
         }
         log("manual.results", total=total, failing=failing)
-        # Optional: send a summary when manually run
+
+        append_run(
+            {
+                "kind": "manual",
+                "ts": int(dt.datetime.now(dt.timezone.utc).timestamp()),
+                "date_from": cfg.date_from,
+                "date_to": cfg.date_to,
+                "days_lookback": cfg.days_lookback,
+                "total_checked": total,
+                "failing": failing,
+                "results": results,
+            }
+        )
+
+        # Send Telegram logs for each campaign checked
         try:
-            send_message(f"Manual run finished. {_last_run['summary']}")
-        except Exception:
-            pass
+            send_message(f"▶️ Manual run finished. {_last_run['summary']}")
+            if TELEGRAM_VERBOSE:
+                from .telegram import send_many
+
+                lines: list[str] = []
+                for r in results:
+                    c = r.get("campaign", {})
+                    failed = [ch for ch in r.get("checks", []) if not ch.get("ok")]
+                    status = "FAIL" if failed else "OK"
+                    lines.append(f"{status} | {c.get('title') or 'Campaign'} | {c.get('id')} | {c.get('domain_name') or ''}")
+                    if failed:
+                        for ch in failed[:5]:
+                            lines.append(f"  - {ch.get('kind')}: {ch.get('failure_type')} {ch.get('message')} {ch.get('tested_url')}")
+                send_many(lines, max_messages=MAX_TELEGRAM_MESSAGES_PER_RUN)
+        except Exception as e:
+            log("telegram.error", error=str(e))
     except Exception as e:
         from .log import log
 
@@ -67,6 +96,9 @@ def _run_once(cfg: AppConfig):
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
     cfg = load_config()
+    cached = load_results()
+    runs = cached.get("runs") if isinstance(cached, dict) else []
+    latest = runs[0] if isinstance(runs, list) and runs else None
     return templates.TemplateResponse(
         "index.html",
         {
@@ -74,6 +106,7 @@ def index(request: Request):
             "cfg": cfg,
             "now": dt.datetime.now(dt.timezone.utc),
             "last_run": _last_run or None,
+            "latest": latest,
         },
     )
 

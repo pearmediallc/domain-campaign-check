@@ -17,6 +17,12 @@ DATABASE_URL = env("DATABASE_URL", "sqlite:///./data.sqlite3")
 TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = env("TELEGRAM_CHAT_ID")
 
+TELEGRAM_VERBOSE = (env("TELEGRAM_VERBOSE", "true") or "true").lower() in ("1", "true", "yes")
+MAX_TELEGRAM_MESSAGES_PER_RUN = int(env("MAX_TELEGRAM_MESSAGES_PER_RUN", "25") or 25)
+
+RESULTS_PATH = env("RESULTS_PATH", "./data/results.json")
+MAX_CACHED_RUNS = int(env("MAX_CACHED_RUNS", "30") or 30)
+
 CHECK_TIMEOUT_SECONDS = int(env("CHECK_TIMEOUT_SECONDS", "15") or 15)
 CHECK_RETRIES = int(env("CHECK_RETRIES", "2") or 2)
 ALERT_ON_FIRST_FAILURE = (env("ALERT_ON_FIRST_FAILURE", "false") or "false").lower() in ("1", "true", "yes")

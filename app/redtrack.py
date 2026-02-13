@@ -146,20 +146,27 @@ class RedTrackClient:
     def get_landing(self, landing_id: str) -> dict[str, Any]:
         return self._get(f"/landings/{landing_id}")
 
-    def report_by_campaign(self, date_from: dt.date, date_to: dt.date) -> list[dict[str, Any]]:
+    def report_by_campaign(self, date_from: dt.date, date_to: dt.date, *, per: int = 1000) -> list[dict[str, Any]]:
         # group=campaign is the common grouping in RedTrack.
-        raw = self._get(
-            "/report",
-            params={
-                "group": "campaign",
-                "date_from": date_from.isoformat(),
-                "date_to": date_to.isoformat(),
-                "timezone": TIMEZONE,
-                "per": 5000,
-                "page": 1,
-                "total": "1",
-                # some deployments support this; harmless otherwise
-                "include_zero_rows": 0,
-            },
-        )
-        return self._normalize_list_payload(raw, label="report")
+        out: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            raw = self._get(
+                "/report",
+                params={
+                    "group": "campaign",
+                    "date_from": date_from.isoformat(),
+                    "date_to": date_to.isoformat(),
+                    "timezone": TIMEZONE,
+                    "per": per,
+                    "page": page,
+                    # some deployments support this; harmless otherwise
+                    "include_zero_rows": 0,
+                },
+            )
+            items = self._normalize_list_payload(raw, label=f"report page {page}")
+            out.extend(items)
+            if len(items) < per:
+                break
+            page += 1
+        return out

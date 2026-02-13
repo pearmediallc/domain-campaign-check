@@ -25,3 +25,27 @@ def send_message(text: str, parse_mode: str | None = None, disable_web_page_prev
     r = httpx.post(url, json=payload, timeout=20)
     if r.status_code >= 400:
         raise TelegramError(f"Telegram send failed: {r.status_code} {r.text[:400]}")
+
+
+def send_many(lines: list[str], *, max_messages: int = 25, header: str | None = None) -> None:
+    """Send lots of lines, chunked into multiple Telegram messages."""
+    if header:
+        send_message(header)
+        max_messages -= 1
+    if max_messages <= 0:
+        return
+
+    chunk = ""
+    sent = 0
+    for line in lines:
+        add = (line + "\n")
+        if len(chunk) + len(add) > 3800:
+            send_message(chunk.rstrip())
+            sent += 1
+            if sent >= max_messages:
+                return
+            chunk = ""
+        chunk += add
+
+    if chunk.strip() and sent < max_messages:
+        send_message(chunk.rstrip())

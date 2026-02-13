@@ -7,8 +7,10 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from .checker import run_full_check
 from .redtrack import RedTrackClient
 from .storage import load_config, save_config, should_run_now
-from .telegram import send_message
+from .telegram import send_message, send_many
 from .log import log
+from .config import MAX_TELEGRAM_MESSAGES_PER_RUN, TELEGRAM_VERBOSE
+from .results_store import append_run
 
 
 def _job():
@@ -35,37 +37,39 @@ def _job():
         failing = sum(1 for r in results if any(not ch.get("ok") for ch in r.get("checks", [])))
         log("job.results", total=total, failing=failing)
 
-        # Telegram notifications
+        run_record = {
+            "kind": "scheduled",
+            "ts": int(time.time()),
+            "date_from": cfg.date_from,
+            "date_to": cfg.date_to,
+            "days_lookback": cfg.days_lookback,
+            "total_checked": total,
+            "failing": failing,
+            "results": results,
+        }
+        append_run(run_record)
+
+        # Telegram notifications (verbose: send a log line per campaign checked)
         try:
             send_message(
-                f"RedTrack domain check finished. Checked {total} active campaigns with spend/rev in window. Failing: {failing}."
+                f"✅ RedTrack domain check finished. Checked {total} campaigns (only campaigns with spend/rev in window). Failing: {failing}."
             )
-        except Exception as e:
-            print(f"[scheduler] telegram failed: {e}")
 
-        if failing:
-            # batch details
-            lines = ["🚨 Failing campaigns:"]
-            for r in results:
-                failed = [ch for ch in r.get("checks", []) if not ch.get("ok")]
-                if not failed:
-                    continue
-                c = r.get("campaign", {})
-                lines.append(f"• {c.get('title') or 'Campaign'} (id {c.get('id')})")
-                if c.get("domain_name"):
-                    lines.append(f"  domain: {c['domain_name']}")
-                if c.get("trackback_url"):
-                    lines.append(f"  url: {c['trackback_url']}")
-                for ch in failed[:3]:
-                    lines.append(
-                        f"  - {ch.get('kind')}: {ch.get('failure_type')} {ch.get('message')} {ch.get('tested_url')}"
-                    )
-                lines.append("")
-            msg = "\n".join(lines)[:3800]
-            try:
-                send_message(msg)
-            except Exception as e:
-                print(f"[scheduler] telegram details failed: {e}")
+            if TELEGRAM_VERBOSE:
+                lines: list[str] = []
+                for r in results:
+                    c = r.get("campaign", {})
+                    failed = [ch for ch in r.get("checks", []) if not ch.get("ok")]
+                    status = "FAIL" if failed else "OK"
+                    lines.append(f"{status} | {c.get('title') or 'Campaign'} | {c.get('id')} | {c.get('domain_name') or ''}")
+                    if failed:
+                        for ch in failed[:5]:
+                            lines.append(f"  - {ch.get('kind')}: {ch.get('failure_type')} {ch.get('message')} {ch.get('tested_url')}")
+                send_many(lines, max_messages=MAX_TELEGRAM_MESSAGES_PER_RUN)
+
+        except Exception as e:
+            log("telegram.error", error=str(e))
+            print(f"[scheduler] telegram failed: {e}")
 
     except Exception as e:
         # Single failure message (at most once per interval due to last_run_epoch)
