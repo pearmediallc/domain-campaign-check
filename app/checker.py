@@ -11,6 +11,7 @@ import httpx
 
 from .config import CHECK_RETRIES, CHECK_TIMEOUT_SECONDS, TIMEZONE
 from .redtrack import RedTrackClient
+from .log import log, debug
 
 
 @dataclass
@@ -168,10 +169,16 @@ def run_full_check(
         df, dt_ = compute_lookback_window(days_lookback)
 
 
+    log("checker.window", date_from=str(df), date_to=str(dt_), timezone=TIMEZONE)
+
     campaigns = redtrack.list_active_campaigns()
+    log("checker.campaigns.fetched", count=len(campaigns))
+
     report_rows = redtrack.report_by_campaign(df, dt_)
+    log("checker.report.fetched", rows=len(report_rows))
 
     active_map = filter_campaigns_with_activity(campaigns, report_rows)
+    log("checker.active_with_activity", count=len(active_map))
 
     results: list[dict[str, Any]] = []
     domain_cache: dict[str, dict[str, Any]] = {}
@@ -181,6 +188,8 @@ def run_full_check(
         cid = str(c.get("id"))
         if cid not in active_map:
             continue
+
+        debug("checker.campaign.start", campaign_id=cid, title=c.get("title"), status=c.get("status"))
 
         # full campaign object (contains streams etc.)
         full = redtrack.get_campaign(cid)

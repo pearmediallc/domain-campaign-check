@@ -14,6 +14,7 @@ from .log import log
 def _job():
     cfg = load_config()
     if not should_run_now(cfg):
+        log("job.skip", reason="interval_not_elapsed", last_run_epoch=cfg.last_run_epoch, interval_minutes=cfg.interval_minutes)
         return
 
     # Always update last_run_epoch even on failure, otherwise it will retry every minute forever.

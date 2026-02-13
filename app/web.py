@@ -32,6 +32,9 @@ def _startup():
 def _run_once(cfg: AppConfig):
     global _last_run
     try:
+        from .log import log
+
+        log("manual.start", date_from=cfg.date_from, date_to=cfg.date_to, days_lookback=cfg.days_lookback)
         redtrack = RedTrackClient()
         results = run_full_check(
             redtrack,
@@ -45,12 +48,16 @@ def _run_once(cfg: AppConfig):
             "time": dt.datetime.now(dt.timezone.utc).isoformat(),
             "summary": f"Checked {total} campaigns. Failing: {failing}.",
         }
+        log("manual.results", total=total, failing=failing)
         # Optional: send a summary when manually run
         try:
             send_message(f"Manual run finished. {_last_run['summary']}")
         except Exception:
             pass
     except Exception as e:
+        from .log import log
+
+        log("manual.error", error=str(e), error_type=type(e).__name__)
         _last_run = {
             "time": dt.datetime.now(dt.timezone.utc).isoformat(),
             "summary": f"Run failed: {e}",
