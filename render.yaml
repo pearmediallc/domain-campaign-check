@@ -6,6 +6,8 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.web:app --host 0.0.0.0 --port $PORT
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
       - key: REDTRACK_API_BASE
         value: https://api.redtrack.io
       - key: TIMEZONE
@@ -36,6 +38,8 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: python -m app.run_check
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
       - key: REDTRACK_API_BASE
         value: https://api.redtrack.io
       - key: TIMEZONE
