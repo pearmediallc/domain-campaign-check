@@ -12,8 +12,10 @@ from .redtrack import RedTrackClient
 from .scheduler import start_scheduler
 from .storage import AppConfig, load_config, save_config
 from .telegram import send_message
+from .debug_routes import router as debug_router
 
 app = FastAPI(title="Domain Campaign Check")
+app.include_router(debug_router)
 templates = Jinja2Templates(directory="app/templates")
 
 _sched = None

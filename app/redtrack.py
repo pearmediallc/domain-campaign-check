@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 
 from .config import REDTRACK_API_BASE, REDTRACK_API_KEY, TIMEZONE
+from .log import debug
 
 
 class RedTrackError(RuntimeError):
@@ -33,14 +34,15 @@ class RedTrackClient:
         - an envelope: {data:[...]}
         """
         if isinstance(data, list):
-            return data
+            # Filter to dict elements only (defensive)
+            return [x for x in data if isinstance(x, dict)]
         if isinstance(data, dict):
             if data.get("error"):
                 raise RedTrackError(f"RedTrack error in {label}: {data.get('error')}")
             for k in ("items", "data", "result"):
                 v = data.get(k)
                 if isinstance(v, list):
-                    return v
+                    return [x for x in v if isinstance(x, dict)]
         raise RedTrackError(f"Unexpected {label} response shape: {type(data)}")
 
     def _get(self, path: str, params: dict[str, Any] | None = None, *, retries: int = 3) -> Any:
@@ -53,7 +55,9 @@ class RedTrackClient:
 
         last_err: str | None = None
         for attempt in range(retries + 1):
+            debug("redtrack.request", path=path, attempt=attempt, params=p)
             r = self.client.get(path, params=p, headers={"Accept": "application/json"})
+            debug("redtrack.response", path=path, status=r.status_code, text_snippet=r.text[:200])
 
             # Try to parse JSON for nicer errors
             data = None

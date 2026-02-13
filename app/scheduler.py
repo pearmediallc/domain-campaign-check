@@ -8,6 +8,7 @@ from .checker import run_full_check
 from .redtrack import RedTrackClient
 from .storage import load_config, save_config, should_run_now
 from .telegram import send_message
+from .log import log
 
 
 def _job():
@@ -20,6 +21,7 @@ def _job():
     save_config(cfg)
 
     try:
+        log("job.start", date_from=cfg.date_from, date_to=cfg.date_to, days_lookback=cfg.days_lookback)
         redtrack = RedTrackClient()
         results = run_full_check(
             redtrack,
@@ -30,6 +32,7 @@ def _job():
 
         total = len(results)
         failing = sum(1 for r in results if any(not ch.get("ok") for ch in r.get("checks", [])))
+        log("job.results", total=total, failing=failing)
 
         # Telegram notifications
         try:
@@ -65,6 +68,7 @@ def _job():
 
     except Exception as e:
         # Single failure message (at most once per interval due to last_run_epoch)
+        log("job.error", error=str(e), error_type=type(e).__name__)
         print(f"[scheduler] job failed: {e}")
         try:
             send_message(f"⚠️ Domain check job failed: {e}")
