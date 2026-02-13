@@ -25,7 +25,7 @@ class RedTrackClient:
 
     def _get(self, path: str, params: dict[str, Any] | None = None, *, retries: int = 3) -> Any:
         if not self.api_key:
-            raise RedTrackError("Missing api key")
+            raise RedTrackError("Missing api key (REDTRACK_API_KEY)")
         p = {"api_key": self.api_key}
         if params:
             p.update({k: v for k, v in params.items() if v is not None})
@@ -33,11 +33,26 @@ class RedTrackClient:
         last_err: str | None = None
         for attempt in range(retries + 1):
             r = self.client.get(path, params=p)
-            if r.status_code < 400:
-                return r.json()
+
+            # Try to parse JSON for nicer errors
+            data = None
+            try:
+                data = r.json()
+            except Exception:
+                data = None
+
+            # Some RedTrack errors come back as JSON with 200 or 4xx
+            if isinstance(data, dict) and data.get("error"):
+                last_err = f"{r.status_code} {data.get('error')}"
+                # don't retry auth errors
+                if r.status_code < 500:
+                    break
+
+            if r.status_code < 400 and not (isinstance(data, dict) and data.get("error")):
+                return data if data is not None else r.text
 
             # retry only on 5xx
-            last_err = f"{r.status_code} {r.text[:500]}"
+            last_err = last_err or f"{r.status_code} {r.text[:500]}"
             if 500 <= r.status_code < 600 and attempt < retries:
                 import time
 
@@ -54,13 +69,24 @@ class RedTrackClient:
         We fall back to /campaigns in that case.
         """
 
+        def _normalize_list(data: Any) -> list[dict[str, Any]]:
+            # RedTrack usually returns a list, but some deployments wrap in {data:[...]}
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict):
+                for k in ("data", "items", "result"):
+                    v = data.get(k)
+                    if isinstance(v, list):
+                        return v
+            raise RedTrackError(f"Unexpected campaigns response shape: {type(data)}")
+
         def _list(path: str) -> list[dict[str, Any]]:
             out: list[dict[str, Any]] = []
             page = 1
             while True:
                 # NOTE: Some RedTrack setups return 500 when using status filter.
                 # So we fetch without status and filter locally.
-                data = self._get(
+                raw = self._get(
                     path,
                     params={
                         "page": page,
@@ -68,8 +94,7 @@ class RedTrackClient:
                         "timezone": TIMEZONE,
                     },
                 )
-                if not isinstance(data, list):
-                    raise RedTrackError(f"Unexpected campaigns response from {path}: {type(data)}")
+                data = _normalize_list(raw)
                 out.extend(data)
                 if len(data) < per:
                     break
