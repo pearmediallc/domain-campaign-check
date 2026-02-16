@@ -17,6 +17,7 @@ from .telegram import TelegramError, send_many, send_message
 
 # Check if we should use webhook mode (for production on Render)
 USE_WEBHOOK = os.getenv("TELEGRAM_USE_WEBHOOK", "false").lower() in ("1", "true", "yes")
+# Force redeploy to pick up environment variable changes
 
 
 class TelegramBot:
