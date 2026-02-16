@@ -12,6 +12,7 @@ from .redtrack import RedTrackClient
 from .scheduler import start_scheduler
 from .storage import AppConfig, load_config, save_config
 from .telegram import send_message
+from .telegram_bot import start_telegram_bot, stop_telegram_bot
 from .debug_routes import router as debug_router
 from .results_store import load_results, append_run
 from .config import MAX_TELEGRAM_MESSAGES_PER_RUN, TELEGRAM_VERBOSE
@@ -21,6 +22,7 @@ app.include_router(debug_router)
 templates = Jinja2Templates(directory="app/templates")
 
 _sched = None
+_bot = None
 _lock = threading.Lock()
 _last_run: dict[str, str] = {}
 _is_running = False
@@ -28,8 +30,15 @@ _is_running = False
 
 @app.on_event("startup")
 def _startup():
-    global _sched
+    global _sched, _bot
     _sched = start_scheduler()
+    _bot = start_telegram_bot()
+
+
+@app.on_event("shutdown")
+def _shutdown():
+    if _bot:
+        stop_telegram_bot()
 
 
 def _run_once(cfg: AppConfig):
