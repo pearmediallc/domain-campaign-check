@@ -175,3 +175,16 @@ def run_now():
         t = threading.Thread(target=_run_once, args=(cfg,), daemon=True)
         t.start()
     return RedirectResponse(url="/", status_code=303)
+
+
+@app.post("/telegram/webhook")
+def telegram_webhook(request: dict):
+    """Webhook endpoint for Telegram updates (alternative to polling)."""
+    from .telegram_bot import handle_telegram_update
+    try:
+        handle_telegram_update(request)
+        return {"ok": True}
+    except Exception as e:
+        from .log import log
+        log("telegram.webhook.error", error=str(e))
+        return {"ok": False, "error": str(e)}

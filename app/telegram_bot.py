@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 from typing import Any
@@ -13,6 +14,9 @@ from .redtrack import RedTrackClient
 from .results_store import append_run
 from .storage import load_config
 from .telegram import TelegramError, send_many, send_message
+
+# Check if we should use webhook mode (for production on Render)
+USE_WEBHOOK = os.getenv("TELEGRAM_USE_WEBHOOK", "false").lower() in ("1", "true", "yes")
 
 
 class TelegramBot:
@@ -30,10 +34,17 @@ class TelegramBot:
             log("telegram.bot.skip", reason="not_configured")
             return
 
+        if USE_WEBHOOK:
+            log("telegram.bot.skip", reason="webhook_mode_enabled")
+            return
+
+        # Delete any existing webhook before starting polling
+        self._delete_webhook()
+
         self.running = True
         self._thread = threading.Thread(target=self._poll_loop, daemon=True)
         self._thread.start()
-        log("telegram.bot.start")
+        log("telegram.bot.start", mode="polling")
 
     def stop(self):
         """Stop the bot polling."""
@@ -41,6 +52,19 @@ class TelegramBot:
         if self._thread:
             self._thread.join(timeout=5)
         log("telegram.bot.stop")
+
+    def _delete_webhook(self):
+        """Delete any existing webhook to avoid 409 conflicts."""
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook"
+            params = {"drop_pending_updates": True}
+            r = httpx.post(url, json=params, timeout=10)
+            if r.status_code == 200:
+                log("telegram.bot.webhook_deleted")
+            else:
+                log("telegram.bot.webhook_delete_error", status=r.status_code)
+        except Exception as e:
+            log("telegram.bot.webhook_delete_exception", error=str(e))
 
     def _poll_loop(self):
         """Main polling loop that fetches updates from Telegram."""
@@ -66,6 +90,10 @@ class TelegramBot:
 
         try:
             r = httpx.get(url, params=params, timeout=15)
+            if r.status_code == 409:
+                log("telegram.bot.conflict", message="Another instance is running. Deleting webhook...")
+                self._delete_webhook()
+                return []
             if r.status_code != 200:
                 log("telegram.bot.get_updates_error", status=r.status_code)
                 return []
@@ -231,14 +259,20 @@ The bot also runs scheduled checks automatically based on your configuration."""
 
 # Global bot instance
 _bot: TelegramBot | None = None
+_webhook_handler: TelegramBot | None = None
 
 
 def start_telegram_bot():
     """Start the Telegram bot (call this on app startup)."""
-    global _bot
+    global _bot, _webhook_handler
     if _bot is None:
         _bot = TelegramBot()
         _bot.start()
+
+    # Create a separate instance for webhook handling
+    if _webhook_handler is None:
+        _webhook_handler = TelegramBot()
+
     return _bot
 
 
@@ -248,3 +282,12 @@ def stop_telegram_bot():
     if _bot:
         _bot.stop()
         _bot = None
+
+
+def handle_telegram_update(update: dict[str, Any]):
+    """Handle a Telegram update received via webhook."""
+    global _webhook_handler
+    if _webhook_handler is None:
+        _webhook_handler = TelegramBot()
+
+    _webhook_handler._handle_update(update)
