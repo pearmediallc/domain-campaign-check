@@ -14,6 +14,7 @@ from .redtrack import RedTrackClient
 from .results_store import append_run
 from .storage import load_config
 from .telegram import TelegramError, send_many, send_message
+from .url_utils import add_sub5_test
 
 # Check if we should use webhook mode (for production on Render)
 USE_WEBHOOK = os.getenv("TELEGRAM_USE_WEBHOOK", "false").lower() in ("1", "true", "yes")
@@ -207,11 +208,15 @@ class TelegramBot:
                     lines.append(
                         f"FAIL | {c.get('title') or 'Campaign'} | {c.get('id')} | {c.get('domain_name') or ''}"
                     )
-                    if c.get("trackback_url"):
-                        lines.append(f"  url: {c.get('trackback_url')}")
+                    # Modify trackback_url to include sub5=test for cloaking bypass
+                    trackback_url = add_sub5_test(c.get("trackback_url"))
+                    if trackback_url:
+                        lines.append(f"  url: {trackback_url}")
                     for ch in failed[:8]:
+                        # Modify tested_url to include sub5=test
+                        tested_url = add_sub5_test(ch.get('tested_url'))
                         lines.append(
-                            f"  - {ch.get('kind')}: {ch.get('failure_type')} {ch.get('message')} {ch.get('tested_url')}"
+                            f"  - {ch.get('kind')}: {ch.get('failure_type')} {ch.get('message')} {tested_url or ''}"
                         )
                     lines.append("")
 

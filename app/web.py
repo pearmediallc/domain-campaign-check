@@ -16,6 +16,7 @@ from .telegram_bot import start_telegram_bot, stop_telegram_bot
 from .debug_routes import router as debug_router
 from .results_store import load_results, append_run
 from .config import MAX_TELEGRAM_MESSAGES_PER_RUN, TELEGRAM_VERBOSE
+from .url_utils import add_sub5_test
 
 app = FastAPI(title="Domain Campaign Check")
 app.include_router(debug_router)
@@ -91,10 +92,14 @@ def _run_once(cfg: AppConfig):
                     if not failed:
                         continue
                     lines.append(f"FAIL | {c.get('title') or 'Campaign'} | {c.get('id')} | {c.get('domain_name') or ''}")
-                    if c.get("trackback_url"):
-                        lines.append(f"  url: {c.get('trackback_url')}")
+                    # Modify trackback_url to include sub5=test for cloaking bypass
+                    trackback_url = add_sub5_test(c.get("trackback_url"))
+                    if trackback_url:
+                        lines.append(f"  url: {trackback_url}")
                     for ch in failed[:8]:
-                        lines.append(f"  - {ch.get('kind')}: {ch.get('failure_type')} {ch.get('message')} {ch.get('tested_url')}")
+                        # Modify tested_url to include sub5=test
+                        tested_url = add_sub5_test(ch.get('tested_url'))
+                        lines.append(f"  - {ch.get('kind')}: {ch.get('failure_type')} {ch.get('message')} {tested_url or ''}")
                     lines.append("")
                 send_many(lines, max_messages=MAX_TELEGRAM_MESSAGES_PER_RUN)
         except Exception as e:
