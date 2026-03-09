@@ -59,7 +59,7 @@ def http_check(url: str, timeout_s: int = CHECK_TIMEOUT_SECONDS) -> UrlCheck:
     tested = url
     start = time.time()
     try:
-        with httpx.Client(follow_redirects=True, timeout=timeout_s, headers={"User-Agent": "domain-campaign-check/1.0"}) as client:
+        with httpx.Client(follow_redirects=True, timeout=timeout_s, headers={"User-Agent": "Mozilla/5.0 (Linux; Android 16; SM-A156U Build/BP2A.250605.031.A3; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/145.0.7632.104 Mobile Safari/537.36 [FB_IAB/FB4A;FBAV/549.0.0.61.62;IABMV/1;]"}) as client:
             r = client.get(url)
         elapsed_ms = int((time.time() - start) * 1000)
         ok = 200 <= r.status_code < 400
