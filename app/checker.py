@@ -12,6 +12,7 @@ import httpx
 from .config import CHECK_RETRIES, CHECK_TIMEOUT_SECONDS, TIMEZONE
 from .redtrack import RedTrackClient
 from .log import log, debug
+from .url_utils import add_sub5_test
 
 
 @dataclass
@@ -56,11 +57,13 @@ def dns_check(hostname: str) -> tuple[bool, str | None]:
 
 
 def http_check(url: str, timeout_s: int = CHECK_TIMEOUT_SECONDS) -> UrlCheck:
+    # Add sub5=test to bypass cloaking, use mobile UA to simulate real user
+    check_url = add_sub5_test(url) or url
     tested = url
     start = time.time()
     try:
         with httpx.Client(follow_redirects=True, timeout=timeout_s, headers={"User-Agent": "Mozilla/5.0 (Linux; Android 16; SM-A156U Build/BP2A.250605.031.A3; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/145.0.7632.104 Mobile Safari/537.36 [FB_IAB/FB4A;FBAV/549.0.0.61.62;IABMV/1;]"}) as client:
-            r = client.get(url)
+            r = client.get(check_url)
         elapsed_ms = int((time.time() - start) * 1000)
         ok = 200 <= r.status_code < 400
 

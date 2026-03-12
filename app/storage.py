@@ -14,8 +14,8 @@ class AppConfig:
     # Scheduling
     # - "interval": run every interval_minutes
     # - "daily_at": run once per day at run_at_hhmm (TIMEZONE)
-    schedule_mode: str = "daily_at"
-    interval_minutes: int = 24 * 60
+    schedule_mode: str = "interval"
+    interval_minutes: int = 60
     run_at_hhmm: str = "17:00"  # 5pm IST by default
 
     # Default lookback window if user doesn't specify exact dates
