@@ -8,6 +8,10 @@ from typing import Any
 
 DEFAULT_PATH = os.getenv("CONFIG_PATH", "./data/config.json")
 
+# EDT operating window: only run scheduled checks between these hours (EDT)
+EDT_RUN_WINDOW_START = (7, 30)   # 7:30 AM EDT
+EDT_RUN_WINDOW_END = (12, 0)     # 12:00 PM EDT
+
 
 @dataclass
 class AppConfig:
@@ -16,10 +20,10 @@ class AppConfig:
     # - "daily_at": run once per day at run_at_hhmm (TIMEZONE)
     schedule_mode: str = "interval"
     interval_minutes: int = 60
-    run_at_hhmm: str = "17:00"  # 5pm IST by default
+    run_at_hhmm: str = "17:00"
 
     # Default lookback window if user doesn't specify exact dates
-    days_lookback: int = 30
+    days_lookback: int = 7
 
     # Optional fixed dates (YYYY-MM-DD). If set, checker uses these.
     date_from: str | None = None
@@ -49,11 +53,33 @@ def save_config(cfg: AppConfig, path: str = DEFAULT_PATH) -> None:
     os.replace(tmp, path)
 
 
+def _in_edt_window() -> bool:
+    """Return True if current time in America/New_York is within the operating window."""
+    import datetime as dt
+
+    try:
+        from zoneinfo import ZoneInfo
+        edt = ZoneInfo("America/New_York")
+    except Exception:
+        # Fallback: UTC-4 as fixed offset for EDT
+        edt = dt.timezone(dt.timedelta(hours=-4))
+
+    now = dt.datetime.now(tz=edt)
+    start = now.replace(hour=EDT_RUN_WINDOW_START[0], minute=EDT_RUN_WINDOW_START[1], second=0, microsecond=0)
+    end = now.replace(hour=EDT_RUN_WINDOW_END[0], minute=EDT_RUN_WINDOW_END[1], second=0, microsecond=0)
+    return start <= now <= end
+
+
 def should_run_now(cfg: AppConfig, *, tz_name: str) -> bool:
     """Return True if a scheduled run should trigger now.
 
     We keep an always-on scheduler tick (every minute) and decide here whether to actually run.
+    Scheduled runs only execute within the EDT operating window (7:30 AM - 12:00 PM EDT).
     """
+
+    # Gate: scheduled runs only within EDT operating window
+    if not _in_edt_window():
+        return False
 
     mode = (cfg.schedule_mode or "interval").lower()
     now_epoch = int(time.time())

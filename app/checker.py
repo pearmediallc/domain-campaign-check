@@ -129,7 +129,7 @@ def compute_lookback_window(days_lookback: int) -> tuple[dt.date, dt.date]:
 
 
 def filter_campaigns_with_activity(campaigns: list[dict[str, Any]], report_rows: list[dict[str, Any]]) -> dict[str, dict[str, float | None]]:
-    """Return map campaign_id -> {cost_30d, revenue_30d} for campaigns with cost>0 or revenue>0."""
+    """Return map campaign_id -> {cost_7d, revenue_7d} for campaigns with cost>0 or revenue>0."""
 
     # Build id set for robustness.
     ids = {str(c.get("id")) for c in campaigns if c.get("id") is not None}
@@ -148,9 +148,60 @@ def filter_campaigns_with_activity(campaigns: list[dict[str, Any]], report_rows:
         cost = _pick_number(row, ["cost", "spend", "total_cost", "totalCost"]) or 0.0
         rev = _pick_number(row, ["revenue", "rev", "total_revenue", "totalRevenue"]) or 0.0
         if cost > 0 or rev > 0:
-            out[cid] = {"cost_30d": float(cost), "revenue_30d": float(rev)}
+            out[cid] = {"cost_7d": float(cost), "revenue_7d": float(rev)}
 
     return out
+
+
+def _is_after_9am_edt() -> bool:
+    """Return True if current time is after 9:00 AM EDT."""
+    try:
+        from zoneinfo import ZoneInfo
+        edt = ZoneInfo("America/New_York")
+    except Exception:
+        edt = dt.timezone(dt.timedelta(hours=-4))
+
+    now = dt.datetime.now(tz=edt)
+    return now.hour >= 9
+
+
+def _get_campaigns_with_today_clicks(
+    redtrack: RedTrackClient,
+    campaign_ids: set[str],
+) -> set[str]:
+    """Fetch today's report and return campaign IDs that have clicks > 0 today."""
+    try:
+        from zoneinfo import ZoneInfo
+        edt = ZoneInfo("America/New_York")
+    except Exception:
+        edt = dt.timezone(dt.timedelta(hours=-4))
+
+    today = dt.datetime.now(tz=edt).date()
+
+    log("checker.today_clicks.fetch", date=today.isoformat())
+    today_rows = redtrack.report_by_campaign(today, today)
+    log("checker.today_clicks.fetched", rows=len(today_rows))
+
+    clicked: set[str] = set()
+    for row in today_rows or []:
+        cid = None
+        for k in ["campaign_id", "id", "campaign", "campaignId"]:
+            if row.get(k) is not None:
+                cid = str(row.get(k))
+                break
+        if not cid or cid not in campaign_ids:
+            continue
+
+        clicks = _pick_number(row, [
+            "clicks", "total_clicks", "totalClicks",
+            "lp_clicks", "lpClicks", "lp_views", "lpViews",
+            "ts_clicks", "click",
+        ]) or 0.0
+
+        if clicks > 0:
+            clicked.add(cid)
+
+    return clicked
 
 
 def run_full_check(
@@ -158,9 +209,9 @@ def run_full_check(
     *,
     date_from: str | None = None,
     date_to: str | None = None,
-    days_lookback: int = 30,
+    days_lookback: int = 7,
 ) -> list[dict[str, Any]]:
-    """Runs the daily check.
+    """Runs the check.
 
     Returns a list of result dicts:
     {campaign, stats, domain, urls, checks:[UrlCheck...]}
@@ -182,6 +233,17 @@ def run_full_check(
 
     active_map = filter_campaigns_with_activity(campaigns, report_rows)
     log("checker.active_with_activity", count=len(active_map))
+
+    # After 9 AM EDT: narrow down to campaigns that received clicks TODAY
+    after_9am = _is_after_9am_edt()
+    if after_9am:
+        today_clicked = _get_campaigns_with_today_clicks(redtrack, set(active_map.keys()))
+        log("checker.today_clicks.filter", after_9am=True, total_active=len(active_map), with_clicks_today=len(today_clicked))
+        # Only keep campaigns that have clicks today
+        active_map = {cid: stats for cid, stats in active_map.items() if cid in today_clicked}
+        log("checker.after_filter", remaining=len(active_map))
+    else:
+        log("checker.today_clicks.filter", after_9am=False, note="before 9 AM EDT, checking all active campaigns")
 
     results: list[dict[str, Any]] = []
     domain_cache: dict[str, dict[str, Any]] = {}

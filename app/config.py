@@ -10,7 +10,7 @@ REDTRACK_API_BASE = env("REDTRACK_API_BASE", "https://api.redtrack.io")
 REDTRACK_API_KEY = env("REDTRACK_API_KEY")
 
 TIMEZONE = env("TIMEZONE", "Asia/Calcutta")
-DAYS_LOOKBACK = int(env("DAYS_LOOKBACK", "30") or 30)
+DAYS_LOOKBACK = int(env("DAYS_LOOKBACK", "7") or 7)
 
 DATABASE_URL = env("DATABASE_URL", "sqlite:///./data.sqlite3")
 
