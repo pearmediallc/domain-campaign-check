@@ -210,6 +210,7 @@ def run_full_check(
     date_from: str | None = None,
     date_to: str | None = None,
     days_lookback: int = 7,
+    stop_flag: Any = None,
 ) -> list[dict[str, Any]]:
     """Runs the check.
 
@@ -253,6 +254,11 @@ def run_full_check(
     target = len(active_map)
 
     for c in campaigns:
+        # Check if stop was requested
+        if stop_flag and callable(stop_flag) and stop_flag():
+            log("checker.stopped", processed=processed, target=target)
+            break
+
         cid = str(c.get("id"))
         if cid not in active_map:
             continue

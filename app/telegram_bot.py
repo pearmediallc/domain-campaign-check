@@ -28,6 +28,7 @@ class TelegramBot:
         self.offset = 0
         self.running = False
         self._check_running = False
+        self._stop_requested = False
         self._thread: threading.Thread | None = None
 
     def start(self):
@@ -139,6 +140,9 @@ class TelegramBot:
         if text.startswith("/check") or text.startswith("/run"):
             log("telegram.bot.command.check", user=username, chat_id=chat_id)
             self._handle_check_command()
+        elif text.startswith("/stop"):
+            log("telegram.bot.command.stop", user=username, chat_id=chat_id)
+            self._handle_stop_command()
         elif text.startswith("/status"):
             log("telegram.bot.command.status", user=username, chat_id=chat_id)
             self._handle_status_command()
@@ -150,14 +154,30 @@ class TelegramBot:
         """Handle the /check or /run command to trigger a domain check."""
         if self._check_running:
             try:
-                send_message("⏳ A domain check is already running. Please wait...")
+                send_message("⏳ A domain check is already running. Use /stop to cancel it.")
             except Exception as e:
                 log("telegram.bot.send_error", error=str(e))
             return
 
-        # Run check in background thread
+        # Reset stop flag and run check in background thread
+        self._stop_requested = False
         t = threading.Thread(target=self._run_check_in_background, daemon=True)
         t.start()
+
+    def _handle_stop_command(self):
+        """Handle the /stop command to cancel a running check."""
+        if not self._check_running:
+            try:
+                send_message("No check is currently running.")
+            except Exception as e:
+                log("telegram.bot.send_error", error=str(e))
+            return
+
+        self._stop_requested = True
+        try:
+            send_message("🛑 Stop requested. The check will stop after the current campaign finishes...")
+        except Exception as e:
+            log("telegram.bot.send_error", error=str(e))
 
     def _run_check_in_background(self):
         """Run the domain check in a background thread."""
@@ -173,12 +193,19 @@ class TelegramBot:
                 date_from=cfg.date_from,
                 date_to=cfg.date_to,
                 days_lookback=cfg.days_lookback,
+                stop_flag=lambda: self._stop_requested,
             )
 
-            total = len(results)
-            failing = sum(1 for r in results if any(not ch.get("ok") for ch in r.get("checks", [])))
-
-            log("telegram.bot.check.results", total=total, failing=failing)
+            if self._stop_requested:
+                total = len(results)
+                failing = sum(1 for r in results if any(not ch.get("ok") for ch in r.get("checks", [])))
+                log("telegram.bot.check.stopped", total=total, failing=failing)
+                send_message(f"🛑 Check stopped. Checked {total} campaigns before stopping. Failures: {failing}.")
+            else:
+                total = len(results)
+                failing = sum(1 for r in results if any(not ch.get("ok") for ch in r.get("checks", [])))
+                log("telegram.bot.check.results", total=total, failing=failing)
+                send_message(f"✅ Check complete! Checked {total} campaigns. Failures: {failing}.")
 
             # Save results
             append_run(
@@ -193,9 +220,6 @@ class TelegramBot:
                     "results": results,
                 }
             )
-
-            # Send summary
-            send_message(f"✅ Check complete! Checked {total} campaigns. Failures: {failing}.")
 
             # Send failure details if any
             if failing:
@@ -230,6 +254,7 @@ class TelegramBot:
                 pass
         finally:
             self._check_running = False
+            self._stop_requested = False
 
     def _handle_status_command(self):
         """Handle the /status command to show current configuration."""
@@ -254,6 +279,7 @@ Use /help for more commands"""
             help_msg = """🤖 *Available Commands*
 
 /check or /run - Trigger a domain check immediately
+/stop - Cancel a running check
 /status - Show current configuration and status
 /help - Show this help message
 
