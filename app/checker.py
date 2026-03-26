@@ -211,6 +211,7 @@ def run_full_check(
     date_to: str | None = None,
     days_lookback: int = 7,
     stop_flag: Any = None,
+    on_result: Any = None,
 ) -> list[dict[str, Any]]:
     """Runs the check.
 
@@ -329,20 +330,25 @@ def run_full_check(
                     break
             checks.append({"kind": kind, **(best.__dict__ if best else UrlCheck(ok=False, failure_type="other", message="unknown").__dict__)})
 
-        results.append(
-            {
-                "campaign": {
-                    "id": cid,
-                    "title": full.get("title"),
-                    "status": full.get("status"),
-                    "domain_id": meta.get("domain_id"),
-                    "domain_name": domain_name,
-                    "trackback_url": meta.get("tracking_url"),
-                },
-                "stats": active_map[cid],
-                "checks": checks,
-            }
-        )
+        entry = {
+            "campaign": {
+                "id": cid,
+                "title": full.get("title"),
+                "status": full.get("status"),
+                "domain_id": meta.get("domain_id"),
+                "domain_name": domain_name,
+                "trackback_url": meta.get("tracking_url"),
+            },
+            "stats": active_map[cid],
+            "checks": checks,
+        }
+        results.append(entry)
+
+        if on_result and callable(on_result):
+            try:
+                on_result(entry, target)
+            except Exception:
+                pass
 
     log("checker.done", checked=len(results), processed=processed, target=target)
     return results

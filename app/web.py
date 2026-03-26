@@ -39,6 +39,7 @@ def _startup():
 @app.on_event("shutdown")
 def _shutdown():
     if _bot:
+        _bot.flush_partial_results()
         stop_telegram_bot()
 
 

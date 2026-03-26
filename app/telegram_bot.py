@@ -30,6 +30,10 @@ class TelegramBot:
         self._check_running = False
         self._stop_requested = False
         self._thread: threading.Thread | None = None
+        # Partial results tracking for graceful shutdown
+        self._partial_results: list[dict[str, Any]] = []
+        self._partial_target: int = 0
+        self._partial_sent: bool = False
 
     def start(self):
         """Start the bot polling in a background thread."""
@@ -182,6 +186,9 @@ class TelegramBot:
     def _run_check_in_background(self):
         """Run the domain check in a background thread."""
         self._check_running = True
+        self._partial_results = []
+        self._partial_target = 0
+        self._partial_sent = False
         try:
             send_message("🔍 Starting domain check...")
             log("telegram.bot.check.start")
@@ -194,7 +201,11 @@ class TelegramBot:
                 date_to=cfg.date_to,
                 days_lookback=cfg.days_lookback,
                 stop_flag=lambda: self._stop_requested,
+                on_result=self._on_partial_result,
             )
+
+            # Mark as sent so shutdown handler doesn't duplicate
+            self._partial_sent = True
 
             if self._stop_requested:
                 total = len(results)
@@ -221,30 +232,7 @@ class TelegramBot:
                 }
             )
 
-            # Send failure details if any
-            if failing:
-                lines: list[str] = [f"🚨 {failing} failing campaign(s) (checked {total})"]
-                for r in results:
-                    c = r.get("campaign", {})
-                    failed = [ch for ch in r.get("checks", []) if not ch.get("ok")]
-                    if not failed:
-                        continue
-                    lines.append(
-                        f"FAIL | {c.get('title') or 'Campaign'} | {c.get('id')} | {c.get('domain_name') or ''}"
-                    )
-                    # Modify trackback_url to include sub5=test for cloaking bypass
-                    trackback_url = add_sub5_test(c.get("trackback_url"))
-                    if trackback_url:
-                        lines.append(f"  url: {trackback_url}")
-                    for ch in failed[:8]:
-                        # Modify tested_url to include sub5=test
-                        tested_url = add_sub5_test(ch.get('tested_url'))
-                        lines.append(
-                            f"  - {ch.get('kind')}: {ch.get('failure_type')} {ch.get('message')} {tested_url or ''}"
-                        )
-                    lines.append("")
-
-                send_many(lines, max_messages=MAX_TELEGRAM_MESSAGES_PER_RUN)
+            self._send_failure_details(results, total)
 
         except Exception as e:
             log("telegram.bot.check.error", error=str(e))
@@ -255,6 +243,73 @@ class TelegramBot:
         finally:
             self._check_running = False
             self._stop_requested = False
+
+    def _on_partial_result(self, result: dict[str, Any], target: int):
+        """Callback invoked after each campaign is checked. Stores partial results for graceful shutdown."""
+        self._partial_results.append(result)
+        self._partial_target = target
+
+    def flush_partial_results(self):
+        """Send partial results to Telegram on shutdown. Called when Render kills the process."""
+        if self._partial_sent or not self._check_running or not self._partial_results:
+            return
+
+        self._partial_sent = True
+        results = self._partial_results
+        total = len(results)
+        target = self._partial_target
+        failing = sum(1 for r in results if any(not ch.get("ok") for ch in r.get("checks", [])))
+
+        log("telegram.bot.check.partial_flush", total=total, target=target, failing=failing)
+
+        try:
+            send_message(
+                f"⚠️ Server restarting. Partial results: checked {total}/{target} campaigns. Failures: {failing}."
+            )
+
+            # Save partial results
+            append_run(
+                {
+                    "kind": "telegram_partial",
+                    "ts": int(time.time()),
+                    "total_checked": total,
+                    "target": target,
+                    "failing": failing,
+                    "results": results,
+                }
+            )
+
+            self._send_failure_details(results, total)
+
+        except Exception as e:
+            log("telegram.bot.partial_flush.error", error=str(e))
+
+    def _send_failure_details(self, results: list[dict[str, Any]], total: int):
+        """Send failure detail lines to Telegram."""
+        failing = sum(1 for r in results if any(not ch.get("ok") for ch in r.get("checks", [])))
+        if not failing:
+            return
+
+        lines: list[str] = [f"🚨 {failing} failing campaign(s) (checked {total})"]
+        for r in results:
+            c = r.get("campaign", {})
+            failed = [ch for ch in r.get("checks", []) if not ch.get("ok")]
+            if not failed:
+                continue
+            lines.append(
+                f"FAIL | {c.get('title') or 'Campaign'} | {c.get('id')} | {c.get('domain_name') or ''}"
+            )
+            trackback_url = add_sub5_test(c.get("trackback_url"))
+            if trackback_url:
+                lines.append(f"  url: {trackback_url}")
+            for ch in failed[:8]:
+                tested_url = add_sub5_test(ch.get('tested_url'))
+                lines.append(
+                    f"  - {ch.get('kind')}: {ch.get('failure_type')} {ch.get('message')} {tested_url or ''}"
+                )
+            lines.append("")
+
+        send_many(lines, max_messages=MAX_TELEGRAM_MESSAGES_PER_RUN)
 
     def _handle_status_command(self):
         """Handle the /status command to show current configuration."""
