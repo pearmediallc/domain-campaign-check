@@ -1,12 +1,40 @@
 from __future__ import annotations
 
 import datetime as dt
+import threading
+import time
 from typing import Any
 
 import httpx
 
 from .config import REDTRACK_API_BASE, REDTRACK_API_KEY, TIMEZONE
 from .log import debug
+
+# Rate limiter: max 20 requests per minute (safe limit to avoid 429s)
+_RPM_LIMIT = 20
+_rpm_lock = threading.Lock()
+_rpm_timestamps: list[float] = []
+
+
+def _rate_limit():
+    """Block until we are within the RPM limit."""
+    with _rpm_lock:
+        now = time.time()
+        window_start = now - 60.0
+        # Remove timestamps older than 60 seconds
+        while _rpm_timestamps and _rpm_timestamps[0] < window_start:
+            _rpm_timestamps.pop(0)
+        # If at limit, wait until oldest request falls outside window
+        if len(_rpm_timestamps) >= _RPM_LIMIT:
+            wait = _rpm_timestamps[0] - window_start
+            if wait > 0:
+                time.sleep(wait + 0.1)
+                # Clean up again after waiting
+                now = time.time()
+                window_start = now - 60.0
+                while _rpm_timestamps and _rpm_timestamps[0] < window_start:
+                    _rpm_timestamps.pop(0)
+        _rpm_timestamps.append(time.time())
 
 
 class RedTrackError(RuntimeError):
@@ -55,9 +83,19 @@ class RedTrackClient:
 
         last_err: str | None = None
         for attempt in range(retries + 1):
+            # Respect rate limit before every request
+            _rate_limit()
+
             debug("redtrack.request", path=path, attempt=attempt, params=p)
             r = self.client.get(path, params=p, headers={"Accept": "application/json"})
             debug("redtrack.response", path=path, status=r.status_code, text_snippet=r.text[:200])
+
+            # 429 Too Many Requests: wait and retry
+            if r.status_code == 429 and attempt < retries:
+                wait = 5 * (attempt + 1)
+                debug("redtrack.rate_limited", path=path, attempt=attempt, wait_s=wait)
+                time.sleep(wait)
+                continue
 
             # Try to parse JSON for nicer errors
             data = None
@@ -84,8 +122,6 @@ class RedTrackClient:
             # retry only on 5xx
             last_err = last_err or f"{r.status_code} {r.text[:500]}"
             if 500 <= r.status_code < 600 and attempt < retries:
-                import time
-
                 time.sleep(1.5 * (attempt + 1))
                 continue
             break
