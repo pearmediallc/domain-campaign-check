@@ -56,30 +56,50 @@ def dns_check(hostname: str) -> tuple[bool, str | None]:
         return False, str(e)
 
 
+MAX_RESPONSE_BYTES = 256 * 1024
+
+_USER_AGENT = (
+    "Mozilla/5.0 (Linux; Android 16; SM-A156U Build/BP2A.250605.031.A3; wv) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/145.0.7632.104 "
+    "Mobile Safari/537.36 [FB_IAB/FB4A;FBAV/549.0.0.61.62;IABMV/1;]"
+)
+
+
 def http_check(url: str, timeout_s: int = CHECK_TIMEOUT_SECONDS) -> UrlCheck:
     # Add sub5=test to bypass cloaking, use mobile UA to simulate real user
     check_url = add_sub5_test(url) or url
     tested = url
     start = time.time()
     try:
-        with httpx.Client(follow_redirects=True, timeout=timeout_s, headers={"User-Agent": "Mozilla/5.0 (Linux; Android 16; SM-A156U Build/BP2A.250605.031.A3; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/145.0.7632.104 Mobile Safari/537.36 [FB_IAB/FB4A;FBAV/549.0.0.61.62;IABMV/1;]"}) as client:
-            r = client.get(check_url)
-        elapsed_ms = int((time.time() - start) * 1000)
-        ok = 200 <= r.status_code < 400
+        with httpx.Client(
+            follow_redirects=True,
+            timeout=timeout_s,
+            headers={"User-Agent": _USER_AGENT},
+        ) as client:
+            with client.stream("GET", check_url) as r:
+                status = r.status_code
+                final_url = str(r.url)
+                ctype = (r.headers.get("content-type") or "").lower()
+                ok = 200 <= status < 400
 
-        # basic "loaded" heuristic: HTML should have some body.
-        content_ok = True
-        ctype = (r.headers.get("content-type") or "").lower()
-        if "text/html" in ctype:
-            txt = r.text or ""
-            if len(txt.strip()) < 200:
-                content_ok = False
+                # basic "loaded" heuristic: HTML should have some body.
+                content_ok = True
+                if ok and "text/html" in ctype:
+                    body = bytearray()
+                    for chunk in r.iter_bytes(chunk_size=8192):
+                        body.extend(chunk)
+                        if len(body) >= MAX_RESPONSE_BYTES:
+                            break
+                    if len(bytes(body).strip()) < 200:
+                        content_ok = False
+
+        elapsed_ms = int((time.time() - start) * 1000)
 
         if ok and content_ok:
-            return UrlCheck(ok=True, tested_url=tested, final_url=str(r.url), http_status=r.status_code, elapsed_ms=elapsed_ms)
+            return UrlCheck(ok=True, tested_url=tested, final_url=final_url, http_status=status, elapsed_ms=elapsed_ms)
 
-        msg = f"HTTP {r.status_code}" + ("; content too small" if ok and not content_ok else "")
-        return UrlCheck(ok=False, failure_type="http", message=msg, tested_url=tested, final_url=str(r.url), http_status=r.status_code, elapsed_ms=elapsed_ms)
+        msg = f"HTTP {status}" + ("; content too small" if ok and not content_ok else "")
+        return UrlCheck(ok=False, failure_type="http", message=msg, tested_url=tested, final_url=final_url, http_status=status, elapsed_ms=elapsed_ms)
 
     except httpx.TimeoutException:
         elapsed_ms = int((time.time() - start) * 1000)
