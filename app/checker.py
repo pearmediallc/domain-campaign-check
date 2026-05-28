@@ -65,33 +65,35 @@ _USER_AGENT = (
 )
 
 
-def http_check(url: str, timeout_s: int = CHECK_TIMEOUT_SECONDS) -> UrlCheck:
+def http_check(url: str, timeout_s: int = CHECK_TIMEOUT_SECONDS, client: httpx.Client | None = None) -> UrlCheck:
     # Add sub5=test to bypass cloaking, use mobile UA to simulate real user
     check_url = add_sub5_test(url) or url
     tested = url
     start = time.time()
-    try:
-        with httpx.Client(
+    own_client = client is None
+    if own_client:
+        client = httpx.Client(
             follow_redirects=True,
             timeout=timeout_s,
             headers={"User-Agent": _USER_AGENT},
-        ) as client:
-            with client.stream("GET", check_url) as r:
-                status = r.status_code
-                final_url = str(r.url)
-                ctype = (r.headers.get("content-type") or "").lower()
-                ok = 200 <= status < 400
+        )
+    try:
+        with client.stream("GET", check_url) as r:
+            status = r.status_code
+            final_url = str(r.url)
+            ctype = (r.headers.get("content-type") or "").lower()
+            ok = 200 <= status < 400
 
-                # basic "loaded" heuristic: HTML should have some body.
-                content_ok = True
-                if ok and "text/html" in ctype:
-                    body = bytearray()
-                    for chunk in r.iter_bytes(chunk_size=8192):
-                        body.extend(chunk)
-                        if len(body) >= MAX_RESPONSE_BYTES:
-                            break
-                    if len(bytes(body).strip()) < 200:
-                        content_ok = False
+            # basic "loaded" heuristic: HTML should have some body.
+            content_ok = True
+            if ok and "text/html" in ctype:
+                body = bytearray()
+                for chunk in r.iter_bytes(chunk_size=8192):
+                    body.extend(chunk)
+                    if len(body) >= MAX_RESPONSE_BYTES:
+                        break
+                if len(bytes(body).strip()) < 200:
+                    content_ok = False
 
         elapsed_ms = int((time.time() - start) * 1000)
 
@@ -110,6 +112,9 @@ def http_check(url: str, timeout_s: int = CHECK_TIMEOUT_SECONDS) -> UrlCheck:
     except Exception as e:
         elapsed_ms = int((time.time() - start) * 1000)
         return UrlCheck(ok=False, failure_type="other", message=str(e), tested_url=tested, elapsed_ms=elapsed_ms)
+    finally:
+        if own_client:
+            client.close()
 
 
 def extract_urls_from_campaign(c: dict[str, Any]) -> dict[str, Any]:
@@ -274,101 +279,106 @@ def run_full_check(
     processed = 0
     target = len(active_map)
 
-    for c in campaigns:
-        # Check if stop was requested
-        if stop_flag and callable(stop_flag) and stop_flag():
-            log("checker.stopped", processed=processed, target=target)
-            break
+    with httpx.Client(
+        follow_redirects=True,
+        timeout=CHECK_TIMEOUT_SECONDS,
+        headers={"User-Agent": _USER_AGENT},
+    ) as http_client:
+        for c in campaigns:
+            # Check if stop was requested
+            if stop_flag and callable(stop_flag) and stop_flag():
+                log("checker.stopped", processed=processed, target=target)
+                break
 
-        cid = str(c.get("id"))
-        if cid not in active_map:
-            continue
+            cid = str(c.get("id"))
+            if cid not in active_map:
+                continue
 
-        processed += 1
-        if processed == 1 or processed % 25 == 0 or processed == target:
-            log("checker.progress", processed=processed, target=target)
+            processed += 1
+            if processed == 1 or processed % 25 == 0 or processed == target:
+                log("checker.progress", processed=processed, target=target)
 
-        debug("checker.campaign.start", campaign_id=cid, title=c.get("title"), status=c.get("status"))
+            debug("checker.campaign.start", campaign_id=cid, title=c.get("title"), status=c.get("status"))
 
-        # full campaign object (contains streams etc.)
-        full = redtrack.get_campaign(cid)
-        meta = extract_urls_from_campaign(full)
+            # full campaign object (contains streams etc.)
+            full = redtrack.get_campaign(cid)
+            meta = extract_urls_from_campaign(full)
 
-        # domain name lookup
-        domain_name = None
-        if meta.get("domain_id"):
-            did = str(meta["domain_id"])
-            if did not in domain_cache:
+            # domain name lookup
+            domain_name = None
+            if meta.get("domain_id"):
+                did = str(meta["domain_id"])
+                if did not in domain_cache:
+                    try:
+                        domain_cache[did] = redtrack.get_domain(did)
+                    except Exception:
+                        domain_cache[did] = {}
+                domain_name = _pick_str(domain_cache[did], ["name", "domain", "title", "hostname"]) or domain_cache[did].get("domain")
+
+            urls_to_check: list[tuple[str, str]] = []  # (kind, url)
+            if meta.get("tracking_url"):
+                urls_to_check.append(("tracking", meta["tracking_url"]))
+
+            if domain_name:
+                # check both https and http quickly
+                urls_to_check.append(("domain_https", f"https://{domain_name}"))
+                urls_to_check.append(("domain_http", f"http://{domain_name}"))
+
+            # landing urls
+            landing_urls: list[str] = []
+            for lid in meta.get("landing_ids") or []:
+                if lid not in landing_cache:
+                    try:
+                        landing_cache[lid] = redtrack.get_landing(lid)
+                    except Exception:
+                        landing_cache[lid] = {}
+                u = _pick_str(landing_cache[lid], ["url"])
+                if u:
+                    landing_urls.append(u)
+
+            for u in landing_urls:
+                urls_to_check.append(("landing", u))
+
+            checks: list[dict[str, Any]] = []
+            for kind, url in urls_to_check:
+                # DNS precheck if url has host
                 try:
-                    domain_cache[did] = redtrack.get_domain(did)
+                    host = urlparse(url).hostname
                 except Exception:
-                    domain_cache[did] = {}
-            domain_name = _pick_str(domain_cache[did], ["name", "domain", "title", "hostname"]) or domain_cache[did].get("domain")
+                    host = None
+                if host:
+                    ok_dns, dns_msg = dns_check(host)
+                    if not ok_dns:
+                        checks.append({"kind": kind, **UrlCheck(ok=False, failure_type="dns", message=dns_msg, tested_url=url).__dict__})
+                        continue
 
-        urls_to_check: list[tuple[str, str]] = []  # (kind, url)
-        if meta.get("tracking_url"):
-            urls_to_check.append(("tracking", meta["tracking_url"]))
+                best: UrlCheck | None = None
+                for attempt in range(CHECK_RETRIES + 1):
+                    res = http_check(url, client=http_client)
+                    best = res
+                    if res.ok:
+                        break
+                checks.append({"kind": kind, **(best.__dict__ if best else UrlCheck(ok=False, failure_type="other", message="unknown").__dict__)})
 
-        if domain_name:
-            # check both https and http quickly
-            urls_to_check.append(("domain_https", f"https://{domain_name}"))
-            urls_to_check.append(("domain_http", f"http://{domain_name}"))
+            entry = {
+                "campaign": {
+                    "id": cid,
+                    "title": full.get("title"),
+                    "status": full.get("status"),
+                    "domain_id": meta.get("domain_id"),
+                    "domain_name": domain_name,
+                    "trackback_url": meta.get("tracking_url"),
+                },
+                "stats": active_map[cid],
+                "checks": checks,
+            }
+            results.append(entry)
 
-        # landing urls
-        landing_urls: list[str] = []
-        for lid in meta.get("landing_ids") or []:
-            if lid not in landing_cache:
+            if on_result and callable(on_result):
                 try:
-                    landing_cache[lid] = redtrack.get_landing(lid)
+                    on_result(entry, target)
                 except Exception:
-                    landing_cache[lid] = {}
-            u = _pick_str(landing_cache[lid], ["url"])
-            if u:
-                landing_urls.append(u)
-
-        for u in landing_urls:
-            urls_to_check.append(("landing", u))
-
-        checks: list[dict[str, Any]] = []
-        for kind, url in urls_to_check:
-            # DNS precheck if url has host
-            try:
-                host = urlparse(url).hostname
-            except Exception:
-                host = None
-            if host:
-                ok_dns, dns_msg = dns_check(host)
-                if not ok_dns:
-                    checks.append({"kind": kind, **UrlCheck(ok=False, failure_type="dns", message=dns_msg, tested_url=url).__dict__})
-                    continue
-
-            best: UrlCheck | None = None
-            for attempt in range(CHECK_RETRIES + 1):
-                res = http_check(url)
-                best = res
-                if res.ok:
-                    break
-            checks.append({"kind": kind, **(best.__dict__ if best else UrlCheck(ok=False, failure_type="other", message="unknown").__dict__)})
-
-        entry = {
-            "campaign": {
-                "id": cid,
-                "title": full.get("title"),
-                "status": full.get("status"),
-                "domain_id": meta.get("domain_id"),
-                "domain_name": domain_name,
-                "trackback_url": meta.get("tracking_url"),
-            },
-            "stats": active_map[cid],
-            "checks": checks,
-        }
-        results.append(entry)
-
-        if on_result and callable(on_result):
-            try:
-                on_result(entry, target)
-            except Exception:
-                pass
+                    pass
 
     log("checker.done", checked=len(results), processed=processed, target=target)
     return results
